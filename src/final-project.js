@@ -1,115 +1,117 @@
-// JUST TEXT CODE TO SEE IF THE WEBSITE IS WORKING !!!
+let seed = 0;
+let layers = [];
+let lineWeights = [];
 
-class Agent {
-    constructor(x, y, maxSpeed, maxForce) {
-      this.position = createVector(x, y);
-      this.lastPosition = createVector(x, y);
-      this.acceleration = createVector(0, 0);
-      this.velocity = createVector(0, 0);
-      this.maxSpeed = maxSpeed;
-      this.maxForce = maxForce;
+const centerX = innerWidth / 2;
+const centerY = innerHeight / 2;
+const w = 500;
+const h = 400;
+const spacing = 15;
+const segmentSize = 5;
+const baseWeight = 1.5;
+const maxExtra = 8;
+const lineCount = h / spacing;
+let segmentCount;
+
+function setup() {
+  createCanvas(innerWidth, innerHeight);
+  colorMode(HSB, 360, 255, 255, 255);
+  noiseSeed(seed);
+  generateLayers();
+
+  const startPoint = centerX - w / 2;
+  const endPoint = centerX + w / 2;
+  segmentCount = Math.ceil((endPoint - startPoint) / segmentSize); 
+  for (let i = 0; i < lineCount; i++) {
+    lineWeights[i] = new Array(segmentCount).fill(baseWeight);
+  }
+
+  noStroke();
+}
+
+class Point {
+  constructor(x, y, noise) {
+    this.x = x;
+    this.y = y;
+    this.noise = noise;
+  }
+}
+
+function generateHorizon(base, maxHeight, offset) {
+  let points = [];
+  for (let i = 0; i < width; i++) {
+    const noiseValue = noise(i / 100, offset);
+    const y = base + noiseValue * maxHeight;
+    const point = new Point(i, y, noiseValue);
+    points.push(point);
+  }
+  return points;
+}
+
+function generateLayers() {
+  let h = height * 0.8;
+  let maxHeight = 60;
+  let offset = 0;
+  layers = [];
+  while (h > 0) {
+    layers.push({
+      base: h,
+      maxHeight: maxHeight,
+      offset: offset,
+    });
+    h -= 120;
+    offset += 1000;
+  }
+}
+
+function draw() {
+  background(230, 20, 10);
+
+  for (let i = 0; i < layers.length; i++) {
+    let layer = layers[i];
+    let t = frameCount * 0.01;
+    let horizon = generateHorizon(layer.base, layer.maxHeight, t + layer.offset);
+
+    let hue = map(i, 0, layers.length, 120, 180);
+    fill(hue, 200, 200, 40);
+    noStroke();
+
+    beginShape();
+    vertex(0, height);
+    for (let p of horizon) {
+      vertex(p.x, p.y);
     }
-  
-    follow(desiredDirection) {
-      desiredDirection = desiredDirection.copy();
-      desiredDirection.mult(this.maxSpeed);
-      let steer = p5.Vector.sub(desiredDirection, this.velocity);
-      steer.limit(this.maxForce);
-      this.applyForce(steer);
-    }
-  
-    applyForce(force) {
-      this.acceleration.add(force);
-    }
-  
-    update() {
-      this.lastPosition = this.position.copy();
-  
-      this.velocity.add(this.acceleration);
-      this.velocity.limit(this.maxSpeed);
-      this.position.add(this.velocity);
-      this.acceleration.mult(0);
-    }
-  
-    checkBorders() {
-      if (this.position.x < 0) {
-        this.position.x = innerWidth;
-        this.lastPosition.x = innerWidth;
-      } else if (this.position.x > innerWidth) {
-        this.position.x = 0;
-        this.lastPosition.x = 0;
+    vertex(width, height);
+    endShape(CLOSE);
+  }
+
+  for (let i = 0; i < lineCount; i++) {
+    const y = centerY - h / 2 + i * spacing;
+    const startX = centerX - w / 2;
+
+    for (let s = 0; s < segmentCount; s++) {
+      const segX = startX + s * segmentSize + segmentSize / 2;
+
+      const d = dist(mouseX, mouseY, segX, y);
+      
+      if (d < spacing) {
+        // Calculate target thickness: closer mouse --> thicker line
+        const targetWeight = baseWeight + (1 - d / spacing) * (maxExtra - baseWeight);
+      lineWeights[i][s] = lerp(lineWeights[i][s], targetWeight, 0.07);
       }
-      if (this.position.y < 0) {
-        this.position.y = innerHeight;
-        this.lastPosition.y = innerHeight;
-      } else if (this.position.y > innerHeight) {
-        this.position.y = 0;
-        this.lastPosition.y = 0;
+
+      // Farbvariation abhängig von Nähe zu Noise-Landschaft
+      let heightBelow = 0;
+      for (let L of layers) {
+        let noiseVal = noise(segX / 100, (frameCount * 0.01) + L.offset);
+        let yVal = L.base + noiseVal * L.maxHeight;
+        if (abs(y - yVal) < 10) heightBelow += 1;
       }
-    }
-  
-    draw() {
-      push();
-      stroke(0, 0, 0, 40);
-      strokeWeight(1);
-      line(
-        this.lastPosition.x,
-        this.lastPosition.y,
-        this.position.x,
-        this.position.y
-      );
-      pop();
+
+      let hue = map(heightBelow, 0, layers.length, 200, 330);
+      stroke(hue, 200, 255, 150);
+      strokeWeight(lineWeights[i][s]);
+      line(segX - segmentSize / 2, y, segX + segmentSize / 2, y);
     }
   }
-  
-  function setup() {
-    createCanvas(innerWidth, innerHeight);
-    background(255, 255, 255);
-    field = generateField();
-    generateAgents();
-  }
-  
-  function generateField() {
-    let field = [];
-    noiseSeed(Math.random() * 100);
-    for (let x = 0; x < maxCols; x++) {
-      field.push([]);
-      for (let y = 0; y < maxRows; y++) {
-        const value = noise(x / divider, y / divider) * Math.PI * 2;
-        field[x].push(p5.Vector.fromAngle(value));
-      }
-    }
-    return field;
-  }
-  
-  function generateAgents() {
-    for (let i = 0; i < 200; i++) {
-      let agent = new Agent(
-        Math.random() * innerWidth,
-        Math.random() * innerHeight,
-        4,
-        0.1
-      );
-      agents.push(agent);
-    }
-  }
-  
-  const fieldSize = 50;
-  const maxCols = Math.ceil(innerWidth / fieldSize);
-  const maxRows = Math.ceil(innerHeight / fieldSize);
-  const divider = 4;
-  let field;
-  let agents = [];
-  
-  function draw() {
-    for (let agent of agents) {
-      const x = Math.floor(agent.position.x / fieldSize);
-      const y = Math.floor(agent.position.y / fieldSize);
-      const desiredDirection = field[x][y];
-      agent.follow(desiredDirection);
-      agent.update();
-      agent.checkBorders();
-      agent.draw();
-    }
-  }
-  
+}
