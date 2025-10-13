@@ -1,90 +1,60 @@
-let seed = 0;
-let layers = [];
-let lineWeights = [];
 
-const centerX = innerWidth / 2;
-const centerY = innerHeight / 2;
-const w = 500;
-const h = 400;
-const spacing = 15;
-const segmentSize = 5;
-const baseWeight = 1.5;
-const maxExtra = 8;
-const lineCount = h / spacing;
-let segmentCount;
+let handpose;
+let video;
+let hands = [];
+
+let agents = [];
+let lineWeights = [];
+const spacing = 25;
+const segmentSize = 10;
+let baseWeight = 1.5;
+let maxExtra = 8;
+
+let w, h, centerX, centerY, lineCount, segmentCount;
+
+function preload() {
+  handpose = ml5.handPose();
+}
 
 function setup() {
   createCanvas(innerWidth, innerHeight);
   colorMode(HSB, 360, 255, 255, 255);
-  noiseSeed(seed);
-  generateLayers();
+  background(0);
 
-  const startPoint = centerX - w / 2;
-  const endPoint = centerX + w / 2;
-  segmentCount = Math.ceil((endPoint - startPoint) / segmentSize); 
+  video = createCapture(VIDEO);
+  video.size(640, 480);
+  video.hide();
+  handpose.detectStart(video, getHandsData);
+
+  w = width;
+  h = height;
+  centerX = width / 2;
+  centerY = height / 2;
+
+  lineCount = Math.ceil(h / spacing);
+  const startPoint = 0;
+  const endPoint = width;
+  segmentCount = Math.ceil((endPoint - startPoint) / segmentSize);
+
   for (let i = 0; i < lineCount; i++) {
     lineWeights[i] = new Array(segmentCount).fill(baseWeight);
   }
 
-  noStroke();
-}
-
-class Point {
-  constructor(x, y, noise) {
-    this.x = x;
-    this.y = y;
-    this.noise = noise;
-  }
-}
-
-function generateHorizon(base, maxHeight, offset) {
-  let points = [];
-  for (let i = 0; i < width; i++) {
-    const noiseValue = noise(i / 100, offset);
-    const y = base + noiseValue * maxHeight;
-    const point = new Point(i, y, noiseValue);
-    points.push(point);
-  }
-  return points;
-}
-
-function generateLayers() {
-  let h = height * 0.8;
-  let maxHeight = 60;
-  let offset = 0;
-  layers = [];
-  while (h > 0) {
-    layers.push({
-      base: h,
-      maxHeight: maxHeight,
-      offset: offset,
-    });
-    h -= 120;
-    offset += 1000;
+  for (let i = 0; i < 150; i++) {
+    let agent = new Agent(
+      random(width),
+      random(height),
+      3,
+      0.08
+    );
+    agents.push(agent);
   }
 }
 
 function draw() {
-  background(230, 20, 10);
+  background(0, 0, 5, 30);
 
-  for (let i = 0; i < layers.length; i++) {
-    let layer = layers[i];
-    let t = frameCount * 0.01;
-    let horizon = generateHorizon(layer.base, layer.maxHeight, t + layer.offset);
-
-    let hue = map(i, 0, layers.length, 120, 180);
-    fill(hue, 200, 200, 40);
-    noStroke();
-
-    beginShape();
-    vertex(0, height);
-    for (let p of horizon) {
-      vertex(p.x, p.y);
-    }
-    vertex(width, height);
-    endShape(CLOSE);
-  }
-
+  // draw lines
   for (let i = 0; i < lineCount; i++) {
     const y = centerY - h / 2 + i * spacing;
     const startX = centerX - w / 2;
@@ -92,26 +62,153 @@ function draw() {
     for (let s = 0; s < segmentCount; s++) {
       const segX = startX + s * segmentSize + segmentSize / 2;
 
-      const d = dist(mouseX, mouseY, segX, y);
-      
-      if (d < spacing) {
-        // Calculate target thickness: closer mouse --> thicker line
-        const targetWeight = baseWeight + (1 - d / spacing) * (maxExtra - baseWeight);
-      lineWeights[i][s] = lerp(lineWeights[i][s], targetWeight, 0.07);
+      // distance from agents
+      let minDist = Infinity;
+      for (let a of agents) {
+        const d = dist(a.position.x, a.position.y, segX, y);
+        if (d < minDist) minDist = d;
       }
 
-      // Farbvariation abhängig von Nähe zu Noise-Landschaft
-      let heightBelow = 0;
-      for (let L of layers) {
-        let noiseVal = noise(segX / 100, (frameCount * 0.01) + L.offset);
-        let yVal = L.base + noiseVal * L.maxHeight;
-        if (abs(y - yVal) < 10) heightBelow += 1;
+      if (minDist < 50) {
+        const targetWeight = baseWeight + (1 - minDist / 50) * (maxExtra - baseWeight);
+        lineWeights[i][s] = lerp(lineWeights[i][s], targetWeight, 0.15);
+      } else {
+        lineWeights[i][s] = lerp(lineWeights[i][s], baseWeight, 0.1);
       }
 
-      let hue = map(heightBelow, 0, layers.length, 200, 330);
-      stroke(hue, 200, 255, 150);
+      const hue = map(y, centerY - h / 2, centerY + h / 2, 180, 300);
+      const alpha = 200;
+      stroke(hue, 200, 255, alpha);
       strokeWeight(lineWeights[i][s]);
       line(segX - segmentSize / 2, y, segX + segmentSize / 2, y);
     }
+  }
+
+  let target = createVector(width / 2, height / 2); // fallback
+  
+  if (hands.length > 0) {
+    let indexTip = hands[0].index_finger_tip;
+    let handX = map(indexTip.x, 0, video.width, 0, width);
+    let handY = map(indexTip.y, 0, video.height, 0, height);
+    target = createVector(handX, handY);
+  }
+  
+
+  // update agents
+  for (let agent of agents) {
+    let followForce = agent.follow(target);
+    let sepForce = agent.separate(agents);
+    followForce.mult(1.0);
+    sepForce.mult(1.5);
+
+    agent.applyForce(followForce);
+    agent.applyForce(sepForce);
+
+    agent.update();
+    agent.checkBorders();
+    agent.draw();
+  }
+
+  push();
+  let camW = 160;
+  let camH = 120;
+  image(video, 10, 10, camW, camH);
+  noFill();
+  stroke(0, 255, 0);
+  rect(10, 10, camW, camH);
+
+  if (hands.length > 0) {
+    let indexTip = hands[0].index_finger_tip;
+    let scaleX = camW / video.width;
+    let scaleY = camH / video.height;
+    fill(255, 0, 0);
+    noStroke();
+    ellipse(indexTip.x * scaleX + 10, indexTip.y * scaleY + 10, 10);
+  }
+  pop();
+}
+
+function getHandsData(results) {
+  hands = results;
+}
+
+class Agent {
+  constructor(x, y, maxSpeed, maxForce) {
+    this.position = createVector(x, y);
+    this.lastPosition = createVector(x, y);
+    this.acceleration = createVector(0, 0);
+    this.velocity = createVector(random(-1, 1), random(-1, 1));
+    this.maxSpeed = maxSpeed;
+    this.maxForce = maxForce;
+    let colors = [
+      [196, 159, 235, 100],
+      [254, 248, 197, 100],
+      [234, 195, 224, 100],
+      [250, 186, 118, 100]
+    ];
+    this.color = random(colors);
+  }
+
+  follow(target) {
+    let desired = p5.Vector.sub(target, this.position);
+    desired.setMag(this.maxSpeed);
+    let steer = p5.Vector.sub(desired, this.velocity);
+    steer.limit(this.maxForce);
+    return steer;
+  }
+
+  separate(agents) {
+    const desiredSeparation = 20;
+    let steer = createVector(0, 0);
+    let count = 0;
+
+    for (let other of agents) {
+      const distance = p5.Vector.dist(this.position, other.position);
+      if (distance > 0 && distance < desiredSeparation) {
+        steer.add(
+          p5.Vector.sub(this.position, other.position)
+            .normalize()
+            .div(distance)
+        );
+        count++;
+      }
+    }
+    if (count > 0) {
+      steer.div(count)
+           .setMag(this.maxSpeed)
+           .sub(this.velocity)
+           .limit(this.maxForce);
+    }
+    return steer;
+  }
+
+  applyForce(force) {
+    this.acceleration.add(force);
+  }
+
+  update() {
+    this.lastPosition = this.position.copy();
+    this.velocity.add(this.acceleration);
+    this.velocity.limit(this.maxSpeed);
+    this.position.add(this.velocity);
+    this.acceleration.mult(0);
+  }
+
+  checkBorders() {
+    if (this.position.x < 0) this.position.x = width;
+    if (this.position.x > width) this.position.x = 0;
+    if (this.position.y < 0) this.position.y = height;
+    if (this.position.y > height) this.position.y = 0;
+  }
+
+  draw() {
+    stroke(this.color);
+    strokeWeight(2);
+    line(
+      this.lastPosition.x,
+      this.lastPosition.y,
+      this.position.x,
+      this.position.y
+    );
   }
 }
