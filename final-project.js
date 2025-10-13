@@ -1,9 +1,9 @@
-
 let handpose;
 let video;
 let hands = [];
 
 let agents = [];
+let soundAgents = [];
 let lineWeights = [];
 const spacing = 25;
 const segmentSize = 10;
@@ -12,15 +12,31 @@ let maxExtra = 8;
 
 let w, h, centerX, centerY, lineCount, segmentCount;
 
+let synth;
+let lastScheduledTime = 0;
+const noteCooldown = 300;
+// Pentatonik in C (recommendet from ChatGPT)
+const scale = ["C4", "D4", "E4", "G4", "A4", "C5", "D5", "E5", "G5", "A5"];
+
 function preload() {
   handpose = ml5.handPose();
 }
 
 function setup() {
-  createCanvas(innerWidth, innerHeight);
+  createCanvas(windowWidth, windowHeight);
   colorMode(HSB, 360, 255, 255, 255);
   background(0);
 
+  document.body.style.margin = '0';
+  document.body.style.padding = '0';
+
+  // initializing sound
+  synth = new Tone.Synth({
+    oscillator: { type: "sine" },
+    envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.1 }
+  }).toDestination();
+
+  // initializing video
   video = createCapture(VIDEO);
   video.size(640, 480);
   video.hide();
@@ -41,13 +57,10 @@ function setup() {
   }
 
   for (let i = 0; i < 150; i++) {
-    let agent = new Agent(
-      random(width),
-      random(height),
-      3,
-      0.08
-    );
+    let soundBoid = i < 5; // limits the amount of simultaneous notes so the sound stays harmonic
+    let agent = new Agent(random(width), random(height), 3, 0.08, soundBoid);
     agents.push(agent);
+    if (soundBoid) soundAgents.push(agent);
   }
 }
 
@@ -62,11 +75,14 @@ function draw() {
     for (let s = 0; s < segmentCount; s++) {
       const segX = startX + s * segmentSize + segmentSize / 2;
 
-      // distance from agents
+      // dinstance to agents
       let minDist = Infinity;
       for (let a of agents) {
-        const d = dist(a.position.x, a.position.y, segX, y);
-        if (d < minDist) minDist = d;
+        // due to perfomance issues we used ChatGPT to help us fix the problem
+        if (abs(a.position.x - segX) < 50 && abs(a.position.y - y) < 50) {
+          const d = dist(a.position.x, a.position.y, segX, y);
+          if (d < minDist) minDist = d;
+        }
       }
 
       if (minDist < 50) {
@@ -84,15 +100,13 @@ function draw() {
     }
   }
 
-  let target = createVector(width / 2, height / 2); // fallback
-  
+  let target = createVector(width / 2, height / 2);
   if (hands.length > 0) {
     let indexTip = hands[0].index_finger_tip;
     let handX = map(indexTip.x, 0, video.width, 0, width);
     let handY = map(indexTip.y, 0, video.height, 0, height);
     target = createVector(handX, handY);
   }
-  
 
   // update agents
   for (let agent of agents) {
@@ -109,13 +123,31 @@ function draw() {
     agent.draw();
   }
 
+  for (let sa of soundAgents) {
+    for (let i = 0; i < lineCount; i++) {
+      const y = centerY - h / 2 + i * spacing;
+      if (abs(sa.position.y - y) < 3) { // hits the line
+        let now = millis();
+        if (!sa.lastNoteTime || now - sa.lastNoteTime > noteCooldown) {
+          let noteIndex = floor(map(y, 0, height, scale.length - 1, 0));
+          let note = scale[constrain(noteIndex, 0, scale.length - 1)];
+          let toneTime = Tone.now();
+          if (toneTime <= lastScheduledTime) toneTime = lastScheduledTime + 0.01;
+          synth.triggerAttackRelease(note, "8n", toneTime);
+          lastScheduledTime = toneTime;
+          sa.lastNoteTime = now;
+        }
+      }
+    }
+  }
+
   push();
   let camW = 160;
   let camH = 120;
-  image(video, 10, 10, camW, camH);
-  noFill();
-  stroke(0, 255, 0);
-  rect(10, 10, camW, camH);
+  // image(video, 10, 10, camW, camH);
+  // noFill();
+  // stroke(0, 255, 0);
+  // rect(10, 10, camW, camH);
 
   if (hands.length > 0) {
     let indexTip = hands[0].index_finger_tip;
@@ -133,13 +165,15 @@ function getHandsData(results) {
 }
 
 class Agent {
-  constructor(x, y, maxSpeed, maxForce) {
+  constructor(x, y, maxSpeed, maxForce, soundBoid = false) {
     this.position = createVector(x, y);
     this.lastPosition = createVector(x, y);
     this.acceleration = createVector(0, 0);
     this.velocity = createVector(random(-1, 1), random(-1, 1));
     this.maxSpeed = maxSpeed;
     this.maxForce = maxForce;
+    this.soundBoid = soundBoid;
+    this.lastNoteTime = 0;
     let colors = [
       [196, 159, 235, 100],
       [254, 248, 197, 100],
@@ -203,12 +237,7 @@ class Agent {
 
   draw() {
     stroke(this.color);
-    strokeWeight(2);
-    line(
-      this.lastPosition.x,
-      this.lastPosition.y,
-      this.position.x,
-      this.position.y
-    );
+    strokeWeight(this.soundBoid ? 3 : 2);
+    line(this.lastPosition.x, this.lastPosition.y, this.position.x, this.position.y);
   }
 }
