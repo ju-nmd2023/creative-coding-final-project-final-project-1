@@ -103,7 +103,7 @@ function draw() {
   let target = createVector(width / 2, height / 2);
   if (hands.length > 0) {
     let indexTip = hands[0].index_finger_tip;
-    let handX = map(indexTip.x, 0, video.width, 0, width);
+    let handX = map(indexTip.x, 0, video.width, width, 0);
     let handY = map(indexTip.y, 0, video.height, 0, height);
     target = createVector(handX, handY);
   }
@@ -144,10 +144,6 @@ function draw() {
   push();
   let camW = 160;
   let camH = 120;
-  // image(video, 10, 10, camW, camH);
-  // noFill();
-  // stroke(0, 255, 0);
-  // rect(10, 10, camW, camH);
 
   if (hands.length > 0) {
     let indexTip = hands[0].index_finger_tip;
@@ -155,7 +151,6 @@ function draw() {
     let scaleY = camH / video.height;
     fill(255, 0, 0);
     noStroke();
-    ellipse(indexTip.x * scaleX + 10, indexTip.y * scaleY + 10, 10);
   }
   pop();
 }
